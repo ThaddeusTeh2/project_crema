@@ -23,11 +23,19 @@ def start_pipeline():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
+    locked_vars = {
+        "dose": data.get("dose", 18.0),
+        "yield": data.get("yield", 36.0),
+        "temperature": data.get("temperature", 93.0),
+        "preinfusion": data.get("preinfusion", 5.0),
+    }
+
     state = {
         "phase": "secant",
         "coffee_name": coffee_name,
         "target_time": target_time,
         "starting_grind": starting_grind.to_dict(),
+        "locked_vars": locked_vars,
         "secant": {
             "active": True,
             "converged": False,
@@ -49,14 +57,17 @@ def start_pipeline():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "grind_macro": macro,
         "grind_micro": micro,
-        "dose": None,
-        "yield": None,
-        "temperature": None,
-        "preinfusion": None,
+        "dose": locked_vars["dose"],
+        "yield": locked_vars["yield"],
+        "temperature": locked_vars["temperature"],
+        "preinfusion": locked_vars["preinfusion"],
         "shot_time": None,
         "taste_score": None,
+        "taste_components": None,
         "method": "secant_start",
         "notes": f"Starting grind for {coffee_name}",
+        "valid_for_model": False,
+        "valid_reason": "pipeline start, no taste score",
     }
     store.add_shot(shot)
 

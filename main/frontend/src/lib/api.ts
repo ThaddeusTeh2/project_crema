@@ -6,6 +6,9 @@ import type {
   Recipe,
   BayesianInitResponse,
   BayesianRecordResponse,
+  BayesianSessionInfo,
+  CoffeeSummary,
+  TasteComponents,
 } from "@/types";
 
 const BASE = "/api";
@@ -48,14 +51,22 @@ export const api = {
       macro: number;
       micro: string;
       target_time: number;
+      dose?: number;
+      yield?: number;
+      temperature?: number;
+      preinfusion?: number;
     }) => post<PipelineState>("/pipeline/start", data),
     state: () => get<PipelineState>("/pipeline/state"),
     reset: () => post<{ ok: boolean }>("/pipeline/reset"),
     restartPhase: () => post<{ ok: boolean; phase: string; state: PipelineState }>("/pipeline/restart-phase"),
   },
   secant: {
-    record: (shot_time: number) =>
-      post<SecantRecordResponse>("/pipeline/secant/record", { shot_time }),
+    record: (shot_time: number, extra?: { shot_quality?: string; notes?: string }) =>
+      post<SecantRecordResponse>("/pipeline/secant/record", {
+        shot_time,
+        shot_quality: extra?.shot_quality || "good",
+        notes: extra?.notes,
+      }),
   },
   golden: {
     config: (bounds?: {
@@ -68,30 +79,67 @@ export const api = {
         "/pipeline/golden/config",
         bounds || {}
       ),
-    compare: (winner: "a" | "b") =>
-      post<GoldenCompareResponse>("/pipeline/golden/compare", { winner }),
+    compare: (preference: string) =>
+      post<GoldenCompareResponse>("/pipeline/golden/compare", { preference }),
   },
   recipe: {
-    save: (recipe_name: string) =>
-      post<{ recipe: Recipe }>("/pipeline/recipe/save", { recipe_name }),
+    save: (recipe_name: string, extra?: {
+      dose?: number;
+      yield?: number;
+      temperature?: number;
+      preinfusion?: number;
+      taste_score?: number;
+      taste_components?: TasteComponents;
+    }) =>
+      post<{ recipe: Recipe; seed_shot_id: string }>("/pipeline/recipe/save", {
+        recipe_name,
+        ...extra,
+      }),
     list: () => get<Recipe[]>("/recipes"),
   },
   bayesian: {
-    init: (variables?: { name: string; min: number; max: number }[]) =>
-      post<BayesianInitResponse>("/bayesian/init", { variables }),
-    suggest: () =>
-      post<{ suggestion: Record<string, unknown> }>("/bayesian/suggest"),
-    record: (params: Record<string, number>, score: number, extra?: Record<string, unknown>) =>
+    init: (coffee_name: string, n_initial?: number) =>
+      post<BayesianInitResponse>("/bayesian/init", { coffee_name, n_initial }),
+    suggest: (coffee_name: string) =>
+      post<{ suggestion: Record<string, unknown>; coffee_name: string }>(
+        "/bayesian/suggest",
+        { coffee_name }
+      ),
+    record: (coffee_name: string, params: Record<string, number>, score: number, extra?: {
+      shot_time?: number;
+      notes?: string;
+      valid_for_model?: boolean;
+      valid_reason?: string;
+      taste_components?: TasteComponents;
+    }) =>
       post<BayesianRecordResponse>("/bayesian/record", {
+        coffee_name,
         params,
         score,
         ...extra,
       }),
+    state: (coffee_name: string) =>
+      get<{
+        coffee_name: string;
+        initialized: boolean;
+        history: Record<string, unknown>[];
+        history_count: number;
+        total_observations: number;
+        confidence: string;
+        variables: { name: string; min: number; max: number }[];
+      }>(`/bayesian/state?coffee_name=${encodeURIComponent(coffee_name)}`),
+    sessions: () => get<BayesianSessionInfo[]>("/bayesian/sessions"),
+    reset: (coffee_name: string) =>
+      post<{ ok: boolean }>("/bayesian/reset", { coffee_name }),
+    coffees: () => get<CoffeeSummary[]>("/bayesian/coffees"),
   },
   shots: {
-    list: (method?: string) => {
-      const qs = method ? `?method=${method}` : "";
-      return get<Shot[]>(`/shots${qs}`);
+    list: (method?: string, coffee?: string) => {
+      const params = new URLSearchParams();
+      if (method) params.set("method", method);
+      if (coffee) params.set("coffee", coffee);
+      const qs = params.toString();
+      return get<Shot[]>(`/shots${qs ? `?${qs}` : ""}`);
     },
     add: (shot: Partial<Shot>) => post<Shot>("/shots", shot),
     clear: () => del<{ ok: boolean }>("/shots"),

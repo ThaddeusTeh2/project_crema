@@ -8,6 +8,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 SHOTS_FILE = DATA_DIR / "shots.json"
 STATE_FILE = DATA_DIR / "pipeline_state.json"
 RECIPES_FILE = DATA_DIR / "recipes.json"
+BAYESIAN_FILE = DATA_DIR / "bayesian_sessions.json"
 
 
 def _ensure_dir() -> None:
@@ -17,7 +18,7 @@ def _ensure_dir() -> None:
 def _read_json(path: Path) -> dict | list:
     _ensure_dir()
     if not path.exists():
-        return {} if "state" in path.name else []
+        return {} if ("state" in path.name or "bayesian" in path.name) else []
     with open(path, "r") as f:
         return json.load(f)
 
@@ -75,3 +76,22 @@ def save_recipe(recipe: dict) -> dict:
     recipes.append(recipe)
     _write_json(RECIPES_FILE, recipes)
     return recipe
+
+
+def load_bayesian_sessions() -> dict:
+    """Load all per-coffee Bayesian optimizer sessions."""
+    return _read_json(BAYESIAN_FILE)
+
+
+def save_bayesian_session(coffee_name: str, session_data: dict) -> None:
+    """Save a per-coffee Bayesian optimizer session."""
+    sessions = load_bayesian_sessions()
+    sessions[coffee_name] = session_data
+    _write_json(BAYESIAN_FILE, sessions)
+
+
+def delete_bayesian_session(coffee_name: str) -> None:
+    """Delete a per-coffee Bayesian optimizer session."""
+    sessions = load_bayesian_sessions()
+    sessions.pop(coffee_name, None)
+    _write_json(BAYESIAN_FILE, sessions)

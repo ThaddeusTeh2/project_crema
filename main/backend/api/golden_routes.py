@@ -5,10 +5,12 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
 import store
-from algorithms.golden_section import GoldenSectionSearch
+from algorithms.golden_section import GoldenSectionSearch, PREFERENCE_WEIGHTS
 from algorithms.grind import GrindSetting
 
 golden_bp = Blueprint("golden", __name__, url_prefix="/api/pipeline/golden")
+
+VALID_PREFERENCES = list(PREFERENCE_WEIGHTS.keys())
 
 
 @golden_bp.route("/config", methods=["POST"])
@@ -32,8 +34,20 @@ def configure_golden():
                     macro=int(last_grind_str[:-1]),
                     micro=last_grind_str[-1],
                 ).to_float()
-                coarse = GrindSetting.from_float(min(center + 5, 31.8))
-                fine = GrindSetting.from_float(max(center - 5, 1.0))
+
+                good_history = [h for h in secant_data.get("history", []) if h.get("quality", "good") == "good"]
+                if len(good_history) >= 2:
+                    first = GrindSetting(
+                        macro=int(good_history[0]["grind"][:-1]),
+                        micro=good_history[0]["grind"][-1],
+                    ).to_float()
+                    movement = abs(center - first)
+                    half_width = max(movement * 1.5, 2.0)
+                else:
+                    half_width = 5.0
+
+                coarse = GrindSetting.from_float(min(center + half_width, 31.8))
+                fine = GrindSetting.from_float(max(center - half_width, 1.0))
             else:
                 return jsonify({"error": "No secant result to auto-configure from. Provide bounds manually."}), 400
         else:
@@ -60,23 +74,29 @@ def configure_golden():
         "best_grind": None,
         "width": round(coarse.to_float() - fine.to_float(), 2),
         "iteration": 0,
+        "history": [],
     }
 
     store.save_state(state)
+
+    locked = state.get("locked_vars", {})
 
     shot_a = {
         "coffee_name": state.get("coffee_name", ""),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "grind_macro": initial["point_a"].macro,
         "grind_micro": initial["point_a"].micro,
-        "dose": None,
-        "yield": None,
-        "temperature": None,
-        "preinfusion": None,
+        "dose": locked.get("dose"),
+        "yield": locked.get("yield"),
+        "temperature": locked.get("temperature"),
+        "preinfusion": locked.get("preinfusion"),
         "shot_time": None,
         "taste_score": None,
+        "taste_components": None,
         "method": "golden_test",
         "notes": "Golden section test point A",
+        "valid_for_model": False,
+        "valid_reason": "golden section test — pairwise comparison only",
     }
     store.add_shot(shot_a)
 
@@ -85,14 +105,17 @@ def configure_golden():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "grind_macro": initial["point_b"].macro,
         "grind_micro": initial["point_b"].micro,
-        "dose": None,
-        "yield": None,
-        "temperature": None,
-        "preinfusion": None,
+        "dose": locked.get("dose"),
+        "yield": locked.get("yield"),
+        "temperature": locked.get("temperature"),
+        "preinfusion": locked.get("preinfusion"),
         "shot_time": None,
         "taste_score": None,
+        "taste_components": None,
         "method": "golden_test",
         "notes": "Golden section test point B",
+        "valid_for_model": False,
+        "valid_reason": "golden section test — pairwise comparison only",
     }
     store.add_shot(shot_b)
 
@@ -105,10 +128,10 @@ def configure_golden():
 @golden_bp.route("/compare", methods=["POST"])
 def compare_golden():
     data = request.get_json(silent=True) or {}
-    winner = data.get("winner")
+    preference = data.get("preference", "slightly_a")
 
-    if winner not in ("a", "b"):
-        return jsonify({"error": "winner must be 'a' or 'b'"}), 400
+    if preference not in VALID_PREFERENCES:
+        return jsonify({"error": f"preference must be one of: {', '.join(VALID_PREFERENCES)}"}), 400
 
     state = store.load_state()
     if not state or state.get("phase") != "golden":
@@ -118,7 +141,19 @@ def compare_golden():
     gs = GoldenSectionSearch.from_dict(golden_data)
     gs._initialized = golden_data.get("initialized", True)
 
-    result = gs.compare(winner)
+    result = gs.compare(preference)
+
+    locked = state.get("locked_vars", {})
+
+    prev_history = golden_data.get("history", [])
+    prev_history.append({
+        "iteration": gs.iteration,
+        "point_a": golden_data.get("point_a", "?"),
+        "point_b": golden_data.get("point_b", "?"),
+        "preference": preference,
+        "weight": result["weight"],
+        "action": result["action"],
+    })
 
     state["golden"] = {
         **gs.to_dict(),
@@ -131,6 +166,7 @@ def compare_golden():
         "best_grind": str(result["best_grind"]) if result.get("best_grind") else None,
         "width": result["width"],
         "iteration": gs.iteration,
+        "history": prev_history,
     }
 
     store.save_state(state)
@@ -141,6 +177,8 @@ def compare_golden():
         "retained_point": str(result["retained_point"]) if result.get("retained_point") else None,
         "converged": result["converged"],
         "width": result["width"],
+        "preference": preference,
+        "weight": result["weight"],
     }
 
     if result["converged"]:
@@ -152,14 +190,17 @@ def compare_golden():
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "grind_macro": result["new_point"].macro,
             "grind_micro": result["new_point"].micro,
-            "dose": None,
-            "yield": None,
-            "temperature": None,
-            "preinfusion": None,
+            "dose": locked.get("dose"),
+            "yield": locked.get("yield"),
+            "temperature": locked.get("temperature"),
+            "preinfusion": locked.get("preinfusion"),
             "shot_time": None,
             "taste_score": None,
+            "taste_components": None,
             "method": "golden_compare",
-            "notes": f"Golden section iteration {gs.iteration}, winner={winner}",
+            "notes": f"Golden section iteration {gs.iteration}, preference={preference}",
+            "valid_for_model": False,
+            "valid_reason": "golden section — pairwise comparison only",
         }
         store.add_shot(shot)
 

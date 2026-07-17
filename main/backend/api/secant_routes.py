@@ -15,6 +15,7 @@ secant_bp = Blueprint("secant", __name__, url_prefix="/api/pipeline/secant")
 def record_shot():
     data = request.get_json(silent=True) or {}
     shot_time = data.get("shot_time")
+    shot_quality = data.get("shot_quality", "good")
 
     if shot_time is None:
         return jsonify({"error": "shot_time is required"}), 400
@@ -23,6 +24,7 @@ def record_shot():
     if not state or state.get("phase") != "secant":
         return jsonify({"error": "No active secant session. Start a pipeline first."}), 400
 
+    locked = state.get("locked_vars", {})
     secant_data = state.get("secant", {})
     secant = SecantMethod(
         target_time=secant_data.get("target_time", state.get("target_time", 30.0)),
@@ -39,10 +41,10 @@ def record_shot():
     micro = grind_str[-1] if grind_str[-1].isalpha() else "E"
     current_grind = GrindSetting(macro=macro, micro=micro)
 
-    result = secant.record_shot(current_grind, float(shot_time))
+    result = secant.record_shot(current_grind, float(shot_time), shot_quality=shot_quality)
 
     state["secant"] = secant.to_dict()
-    if result["next_grind"]:
+    if result.get("next_grind"):
         state["secant"]["next_grind"] = str(result["next_grind"])
     else:
         state["secant"]["next_grind"] = None
@@ -52,27 +54,37 @@ def record_shot():
 
     store.save_state(state)
 
+    dose = data.get("dose", locked.get("dose"))
+    syield = data.get("yield", locked.get("yield"))
+    temperature = data.get("temperature", locked.get("temperature"))
+    preinfusion = data.get("preinfusion", locked.get("preinfusion"))
+
     shot = {
         "coffee_name": state.get("coffee_name", ""),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "grind_macro": current_grind.macro,
         "grind_micro": current_grind.micro,
-        "dose": data.get("dose"),
-        "yield": data.get("yield"),
-        "temperature": data.get("temperature"),
-        "preinfusion": data.get("preinfusion"),
+        "dose": dose,
+        "yield": syield,
+        "temperature": temperature,
+        "preinfusion": preinfusion,
         "shot_time": float(shot_time),
         "taste_score": None,
+        "taste_components": None,
         "method": "secant",
-        "notes": None,
+        "notes": data.get("notes"),
+        "valid_for_model": False,
+        "valid_reason": f"secant dial-in — shot quality: {shot_quality}",
+        "shot_quality": shot_quality,
     }
     store.add_shot(shot)
 
     response = {
-        "next_grind": str(result["next_grind"]) if result["next_grind"] else None,
+        "next_grind": str(result["next_grind"]) if result.get("next_grind") else None,
         "converged": result["converged"],
         "iteration": result["iteration"],
         "error": result["error"],
+        "rejected": result.get("rejected", False),
     }
 
     if result["converged"]:

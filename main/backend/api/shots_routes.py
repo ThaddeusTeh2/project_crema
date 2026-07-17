@@ -45,8 +45,11 @@ def add_shot():
         "preinfusion": data.get("preinfusion"),
         "shot_time": data.get("shot_time"),
         "taste_score": data.get("taste_score"),
+        "taste_components": data.get("taste_components"),
         "method": data.get("method", "manual"),
         "notes": data.get("notes"),
+        "valid_for_model": data.get("valid_for_model", True),
+        "valid_reason": data.get("valid_reason"),
     }
 
     saved = store.add_shot(shot)

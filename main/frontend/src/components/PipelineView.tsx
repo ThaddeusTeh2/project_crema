@@ -5,14 +5,45 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { GrindInput } from "@/components/GrindInput";
 import { GrinderDisclaimer } from "@/components/GrinderDisclaimer";
-import { ThumbsUp, ThumbsDown, ArrowRight, Coffee, RotateCcw, Undo2, Save, CheckCircle2, CircleDashed } from "lucide-react";
-import type { PipelineState, PipelinePhase, SecantState, GoldenState, GoldenComparisonEntry, SecantRecordResponse, GoldenCompareResponse } from "@/types";
+import {
+  Coffee, RotateCcw, Undo2, Save, CheckCircle2, CircleDashed, ArrowRight,
+  ThumbsUp, ThumbsDown, AlertTriangle, Equal, XCircle, Wrench, Scale,
+} from "lucide-react";
+import type {
+  PipelineState, PipelinePhase, SecantState, GoldenState, GoldenComparisonEntry,
+  SecantRecordResponse, GoldenCompareResponse, LockedVars, TasteComponents,
+} from "@/types";
 import { api } from "@/lib/api";
+
+const SHOT_QUALITIES = [
+  { value: "good", label: "Good", icon: CheckCircle2, color: "text-green-600 hover:bg-green-50" },
+  { value: "channeling", label: "Channeling", icon: AlertTriangle, color: "text-orange-600 hover:bg-orange-50" },
+  { value: "scale_error", label: "Scale Error", icon: Scale, color: "text-red-600 hover:bg-red-50" },
+  { value: "grinder_mistake", label: "Grinder Mistake", icon: Wrench, color: "text-purple-600 hover:bg-purple-50" },
+  { value: "other", label: "Other", icon: XCircle, color: "text-gray-600 hover:bg-gray-50" },
+] as const;
+
+const PREFERENCES = [
+  { value: "strongly_a", label: "Strongly A", weight: -2, variant: "destructive" as const },
+  { value: "slightly_a", label: "Slightly A", weight: -1, variant: "outline" as const },
+  { value: "same", label: "Same", weight: 0, variant: "outline" as const },
+  { value: "slightly_b", label: "Slightly B", weight: 1, variant: "outline" as const },
+  { value: "strongly_b", label: "Strongly B", weight: 2, variant: "secondary" as const },
+];
+
+const TASTE_COMPONENTS: { key: keyof TasteComponents; label: string }[] = [
+  { key: "sweetness", label: "Sweet" },
+  { key: "acidity", label: "Acid" },
+  { key: "bitterness", label: "Bitter" },
+  { key: "body", label: "Body" },
+  { key: "balance", label: "Bal" },
+];
 
 export function PipelineView() {
   const [phase, setPhase] = useState<PipelinePhase>("setup");
   const [coffeeName, setCoffeeName] = useState("");
   const [targetTime, setTargetTime] = useState(30);
+  const [lockedVars, setLockedVars] = useState<LockedVars>({ dose: 18, yield: 36, temperature: 93, preinfusion: 5 });
   const [secant, setSecant] = useState<SecantState | null>(null);
   const [golden, setGolden] = useState<GoldenState | null>(null);
   const [goldenHistory, setGoldenHistory] = useState<GoldenComparisonEntry[]>([]);
@@ -26,31 +57,28 @@ export function PipelineView() {
         setPhase(state.phase);
         setCoffeeName(state.coffee_name);
         setTargetTime(state.target_time);
+        setLockedVars(state.locked_vars || { dose: 18, yield: 36, temperature: 93, preinfusion: 5 });
         setSecant(state.secant);
         setGolden(state.golden);
+        if (state.golden?.history) setGoldenHistory(state.golden.history);
       }
-    } catch {
-      // No active pipeline
-    }
+    } catch { /* no active pipeline */ }
   }, []);
 
-  useEffect(() => {
-    reloadState();
-  }, [reloadState]);
+  useEffect(() => { reloadState(); }, [reloadState]);
 
-  const handleStart = async (name: string, macro: number, micro: string, target: number) => {
+  const handleStart = async (name: string, macro: number, micro: string, target: number, lv: LockedVars) => {
     setLoading(true);
     setError("");
     try {
       const state = await api.pipeline.start({
-        coffee_name: name,
-        macro,
-        micro,
-        target_time: target,
+        coffee_name: name, macro, micro, target_time: target,
+        dose: lv.dose, yield: lv.yield, temperature: lv.temperature, preinfusion: lv.preinfusion,
       });
       setPhase("secant");
       setCoffeeName(name);
       setTargetTime(target);
+      setLockedVars(lv);
       setSecant(state.secant);
       setGolden(null);
     } catch (e) {
@@ -60,34 +88,21 @@ export function PipelineView() {
     }
   };
 
-  const handleSecantRecord = async (shotTime: string) => {
+  const handleSecantRecord = async (shotTime: string, shotQuality: string) => {
     const t = parseFloat(shotTime);
     if (isNaN(t) || t <= 0 || !secant) return;
-
     setLoading(true);
     setError("");
     try {
-      const result: SecantRecordResponse = await api.secant.record(t);
+      const result: SecantRecordResponse = await api.secant.record(t, { shot_quality: shotQuality });
+      const historyEntry = { iteration: result.iteration, grind: secant.next_grind || "?", time: t, error: t - targetTime, quality: shotQuality };
       const newState: SecantState = {
-        ...secant,
-        converged: result.converged,
-        next_grind: result.next_grind,
-        iteration: result.iteration,
-        error: result.error,
-        history: [
-          ...secant.history,
-          {
-            iteration: result.iteration,
-            grind: secant.next_grind || "?",
-            time: t,
-            error: t - targetTime,
-          },
-        ],
+        ...secant, converged: result.converged, next_grind: result.next_grind,
+        iteration: result.iteration, error: result.error,
+        history: [...secant.history, historyEntry],
       };
       setSecant(newState);
-      if (result.converged) {
-        setPhase("golden");
-      }
+      if (result.converged) setPhase("golden");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to record shot");
     } finally {
@@ -111,39 +126,28 @@ export function PipelineView() {
     }
   };
 
-  const handleGoldenCompare = async (winner: "a" | "b") => {
+  const handleGoldenCompare = async (preference: string) => {
     if (!golden) return;
     setLoading(true);
     setError("");
     try {
-      const result: GoldenCompareResponse = await api.golden.compare(winner);
-
+      const result: GoldenCompareResponse = await api.golden.compare(preference);
       const entry: GoldenComparisonEntry = {
-        iteration: golden.iteration + 1,
-        point_a: golden.point_a || "?",
-        point_b: golden.point_b || "?",
-        winner,
-        action: result.action,
+        iteration: golden.iteration + 1, point_a: golden.point_a || "?", point_b: golden.point_b || "?",
+        preference, weight: result.weight || 0, action: result.action,
       };
       const newHistory = [...goldenHistory, entry];
       setGoldenHistory(newHistory);
-
       const newState: GoldenState = {
-        ...golden,
-        converged: result.converged,
+        ...golden, converged: result.converged,
         point_a: result.action === "pull_new" ? result.new_point : null,
         point_b: result.action === "pull_new" ? result.retained_point : null,
-        retained_point: result.retained_point,
-        new_point: result.new_point,
-        width: result.width,
-        iteration: golden.iteration + 1,
-        history: newHistory,
-        best_grind: result.best_grind || null,
+        retained_point: result.retained_point, new_point: result.new_point,
+        width: result.width, iteration: golden.iteration + 1,
+        history: newHistory, best_grind: result.best_grind || null,
       };
       setGolden(newState);
-      if (result.converged) {
-        setPhase("recipe");
-      }
+      if (result.converged) setPhase("recipe");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to compare");
     } finally {
@@ -155,18 +159,10 @@ export function PipelineView() {
     setLoading(true);
     try {
       await api.pipeline.reset();
-      setPhase("setup");
-      setCoffeeName("");
-      setTargetTime(30);
-      setSecant(null);
-      setGolden(null);
-      setGoldenHistory([]);
-      setError("");
-    } catch {
-      // Ignore
-    } finally {
-      setLoading(false);
-    }
+      setPhase("setup"); setCoffeeName(""); setTargetTime(30);
+      setLockedVars({ dose: 18, yield: 36, temperature: 93, preinfusion: 5 });
+      setSecant(null); setGolden(null); setGoldenHistory([]); setError("");
+    } catch {} finally { setLoading(false); }
   };
 
   const handleRestartPhase = async () => {
@@ -176,21 +172,17 @@ export function PipelineView() {
       const result = await api.pipeline.restartPhase();
       setPhase(result.phase as PipelinePhase);
       setSecant(result.state.secant);
-      setGolden(null);
-      setGoldenHistory([]);
+      setGolden(null); setGoldenHistory([]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to restart phase");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const getFinalGrind = (): string => {
-    if (golden?.converged) {
-      return golden.best_grind || golden.retained_point || golden.point_a || "—";
-    }
+    if (golden?.converged) return golden.best_grind || golden.retained_point || golden.point_a || "—";
     if (secant?.converged && secant.history.length > 0) {
-      return secant.history[secant.history.length - 1].grind;
+      const good = secant.history.filter(h => h.quality !== "rejected");
+      return good.length > 0 ? good[good.length - 1].grind : "—";
     }
     return "—";
   };
@@ -212,92 +204,64 @@ export function PipelineView() {
       )}
 
       {phase !== "setup" && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Coffee className="w-5 h-5 text-coffee" />
-            <div>
-              <h2 className="text-lg font-semibold">{coffeeName}</h2>
-              <p className="text-sm text-muted-foreground">Target: {targetTime}s</p>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Coffee className="w-5 h-5 text-coffee" />
+              <div>
+                <h2 className="text-lg font-semibold">{coffeeName}</h2>
+                <p className="text-sm text-muted-foreground">Target: {targetTime}s</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {phase !== "secant" && (
+                <Button variant="outline" size="sm" onClick={handleRestartPhase} disabled={loading}>
+                  <Undo2 className="w-3.5 h-3.5 mr-1" />Restart This Step
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={handleStartAgain} disabled={loading}>
+                <RotateCcw className="w-3.5 h-3.5 mr-1" />Start Again
+              </Button>
             </div>
           </div>
-          <div className="flex gap-2">
-            {phase !== "secant" && (
-              <Button variant="outline" size="sm" onClick={handleRestartPhase} disabled={loading}>
-                <Undo2 className="w-3.5 h-3.5 mr-1" />
-                Restart This Step
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={handleStartAgain} disabled={loading}>
-              <RotateCcw className="w-3.5 h-3.5 mr-1" />
-              Start Again
-            </Button>
+          <div className="flex gap-2 flex-wrap">
+            <LockedVarBadge label="Dose" value={`${lockedVars.dose.toFixed(1)}g`} />
+            <LockedVarBadge label="Yield" value={`${lockedVars.yield.toFixed(1)}g`} />
+            <LockedVarBadge label="Temp" value={`${lockedVars.temperature}°C`} />
+            <LockedVarBadge label="Preinfusion" value={`${lockedVars.preinfusion}s`} />
           </div>
         </div>
       )}
 
       {/* Setup */}
-      <PhaseSection
-        title="New Coffee"
-        description="Enter your coffee name and estimate a starting grind to begin the dial-in process."
-        done={isSetupDone}
-        active={phase === "setup"}
-      >
+      <PhaseSection title="New Coffee" description="Enter your coffee name, target time, starting grind, and lock your other variables." done={isSetupDone} active={phase === "setup"}>
         {phase === "setup" ? (
-          <SetupContent onStart={handleStart} />
+          <SetupContent onStart={handleStart} lockedVars={lockedVars} setLockedVars={setLockedVars} />
         ) : (
-          <SetupSummary coffeeName={coffeeName} targetTime={targetTime} onRestart={handleStartAgain} />
+          <SetupSummary coffeeName={coffeeName} targetTime={targetTime} lockedVars={lockedVars} onRestart={handleStartAgain} />
         )}
       </PhaseSection>
 
       {/* Secant */}
       {showSecant && (
-        <PhaseSection
-          title="Secant Method"
-          description={`Dial in shot time by linear interpolation. Target: ${targetTime}s.`}
-          done={isSecantDone}
-          active={phase === "secant"}
-          doneLabel={secant?.converged ? `Converged — ${secant.history[secant.history.length - 1]?.time}s @ ${secant.history[secant.history.length - 1]?.grind}` : undefined}
-        >
-          <SecantContent
-            state={secant}
-            targetTime={targetTime}
-            onRecord={handleSecantRecord}
-            disabled={isSecantDone}
-            loading={loading}
-          />
+        <PhaseSection title="Secant Method" description={`Dial in shot time. Target: ${targetTime}s. Only good shots feed the algorithm.`} done={isSecantDone} active={phase === "secant"}
+          doneLabel={secant?.converged ? `Converged — ${secant.history.filter(h => h.quality === "good").slice(-1)[0]?.time ?? "?"}s @ ${secant.history.filter(h => h.quality === "good").slice(-1)[0]?.grind ?? "?"}` : undefined}>
+          <SecantContent state={secant} targetTime={targetTime} onRecord={handleSecantRecord} disabled={isSecantDone} loading={loading} />
         </PhaseSection>
       )}
 
       {/* Golden */}
       {showGolden && (
-        <PhaseSection
-          title="Golden Section Search"
-          description="Compare pairs of shots to find the grind that tastes best."
-          done={isGoldenDone}
-          active={phase === "golden"}
-          doneLabel={golden?.converged ? `Optimized — Best: ${golden.point_a || golden.retained_point || "—"}` : undefined}
-        >
-          <GoldenContent
-            state={golden}
-            history={goldenHistory}
-            onConfigure={handleGoldenConfigure}
-            onCompare={handleGoldenCompare}
-            disabled={isGoldenDone}
-            loading={loading}
-            needsConfig={phase === "golden" && !golden}
-          />
+        <PhaseSection title="Golden Section Search" description="Compare pairs of shots to find the best tasting grind." done={isGoldenDone} active={phase === "golden"}
+          doneLabel={golden?.converged ? `Optimized — Best: ${golden.best_grind || golden.retained_point || golden.point_a || "—"}` : undefined}>
+          <GoldenContent state={golden} history={goldenHistory} onConfigure={handleGoldenConfigure} onCompare={handleGoldenCompare} disabled={isGoldenDone} loading={loading} needsConfig={phase === "golden" && !golden} />
         </PhaseSection>
       )}
 
       {/* Save Recipe */}
       {showRecipe && (
-        <PhaseSection
-          title="Save Recipe"
-          description="Your recipe is ready. Save it with a name to reference later."
-          done={false}
-          active={phase === "recipe"}
-        >
-          <SaveRecipeContent finalGrind={getFinalGrind()} onStartAgain={handleStartAgain} />
+        <PhaseSection title="Save Recipe" description="Finalize your recipe with dose, yield, temperature, preinfusion, and taste score. This shot seeds the Bayesian model." done={false} active={phase === "recipe"}>
+          <SaveRecipeContent finalGrind={getFinalGrind()} lockedVars={lockedVars} onStartAgain={handleStartAgain} />
         </PhaseSection>
       )}
 
@@ -306,41 +270,28 @@ export function PipelineView() {
   );
 }
 
-function PhaseSection({
-  title,
-  description,
-  done,
-  active,
-  doneLabel,
-  children,
-}: {
-  title: string;
-  description: string;
-  done: boolean;
-  active: boolean;
-  doneLabel?: string;
-  children: React.ReactNode;
+function LockedVarBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <Badge variant="outline" className="text-xs gap-1">
+      <span className="text-muted-foreground">{label}:</span>
+      <span className="font-mono font-semibold">{value}</span>
+    </Badge>
+  );
+}
+
+function PhaseSection({ title, description, done, active, doneLabel, children }: {
+  title: string; description: string; done: boolean; active: boolean; doneLabel?: string; children: React.ReactNode;
 }) {
   return (
     <Card className={done ? "opacity-60" : ""}>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between text-base">
           <span className="flex items-center gap-2">
-            {done ? (
-              <CheckCircle2 className="w-4 h-4 text-green-600" />
-            ) : active ? (
-              <CircleDashed className="w-4 h-4 text-coffee animate-pulse" />
-            ) : (
-              <CircleDashed className="w-4 h-4 text-muted-foreground" />
-            )}
+            {done ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : active ? <CircleDashed className="w-4 h-4 text-coffee animate-pulse" /> : <CircleDashed className="w-4 h-4 text-muted-foreground" />}
             {title}
           </span>
-          {done && doneLabel && (
-            <Badge variant="success" className="text-xs">{doneLabel}</Badge>
-          )}
-          {!done && active && (
-            <Badge variant="secondary" className="text-xs">Active</Badge>
-          )}
+          {done && doneLabel && <Badge variant="success" className="text-xs">{doneLabel}</Badge>}
+          {!done && active && <Badge variant="secondary" className="text-xs">Active</Badge>}
         </CardTitle>
         <CardDescription className="text-xs">{description}</CardDescription>
       </CardHeader>
@@ -349,7 +300,11 @@ function PhaseSection({
   );
 }
 
-function SetupContent({ onStart }: { onStart: (name: string, macro: number, micro: string, target: number) => void }) {
+function SetupContent({ onStart, lockedVars, setLockedVars }: {
+  onStart: (name: string, macro: number, micro: string, target: number, lv: LockedVars) => void;
+  lockedVars: LockedVars;
+  setLockedVars: (lv: LockedVars) => void;
+}) {
   const [name, setName] = useState("");
   const [macro, setMacro] = useState(15);
   const [micro, setMicro] = useState("E");
@@ -366,42 +321,51 @@ function SetupContent({ onStart }: { onStart: (name: string, macro: number, micr
         <Input type="number" value={target} onChange={(e) => setTarget(Number(e.target.value))} min={15} max={60} />
       </div>
       <GrindInput macro={macro} micro={micro} onChange={(m, mi) => { setMacro(m); setMicro(mi); }} />
-      <Button variant="coffee" className="w-full" disabled={!name.trim()} onClick={() => onStart(name.trim(), macro, micro, target)}>
+      <div>
+        <label className="text-sm font-medium mb-1.5 block text-muted-foreground">Locked Variables (keep these constant)</label>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-muted-foreground">Dose (g)</label>
+            <Input type="number" step="0.1" value={lockedVars.dose} onChange={(e) => setLockedVars({ ...lockedVars, dose: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Yield (g)</label>
+            <Input type="number" step="0.1" value={lockedVars.yield} onChange={(e) => setLockedVars({ ...lockedVars, yield: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Temperature (°C)</label>
+            <Input type="number" step="1" value={lockedVars.temperature} onChange={(e) => setLockedVars({ ...lockedVars, temperature: Number(e.target.value) })} />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Preinfusion (s)</label>
+            <Input type="number" step="1" value={lockedVars.preinfusion} onChange={(e) => setLockedVars({ ...lockedVars, preinfusion: Number(e.target.value) })} />
+          </div>
+        </div>
+      </div>
+      <Button variant="coffee" className="w-full" disabled={!name.trim()} onClick={() => onStart(name.trim(), macro, micro, target, lockedVars)}>
         Start Dialing In
       </Button>
     </div>
   );
 }
 
-function SetupSummary({ coffeeName, targetTime, onRestart }: { coffeeName: string; targetTime: number; onRestart: () => void }) {
+function SetupSummary({ coffeeName, targetTime, lockedVars, onRestart }: { coffeeName: string; targetTime: number; lockedVars: LockedVars; onRestart: () => void }) {
   return (
     <div className="flex items-center justify-between">
       <div className="space-y-1">
         <p className="text-sm">{coffeeName}</p>
         <p className="text-xs text-muted-foreground">Target: {targetTime}s</p>
       </div>
-      <Button variant="outline" size="sm" onClick={onRestart}>
-        <RotateCcw className="w-3.5 h-3.5 mr-1" />
-        Start Over
-      </Button>
+      <Button variant="outline" size="sm" onClick={onRestart}><RotateCcw className="w-3.5 h-3.5 mr-1" />Start Over</Button>
     </div>
   );
 }
 
-function SecantContent({
-  state,
-  targetTime,
-  onRecord,
-  disabled,
-  loading,
-}: {
-  state: SecantState | null;
-  targetTime: number;
-  onRecord: (time: string) => void;
-  disabled: boolean;
-  loading: boolean;
+function SecantContent({ state, targetTime, onRecord, disabled, loading }: {
+  state: SecantState | null; targetTime: number; onRecord: (time: string, quality: string) => void; disabled: boolean; loading: boolean;
 }) {
   const [shotTime, setShotTime] = useState("");
+  const [selectedQuality, setSelectedQuality] = useState("good");
 
   if (!state) return null;
 
@@ -416,6 +380,7 @@ function SecantContent({
                 <th className="text-left px-3 py-2">Grind</th>
                 <th className="text-left px-3 py-2">Time</th>
                 <th className="text-left px-3 py-2">Error</th>
+                <th className="text-left px-3 py-2">Quality</th>
               </tr>
             </thead>
             <tbody>
@@ -428,6 +393,13 @@ function SecantContent({
                     <span className={Math.abs(h.time - targetTime) <= 1 ? "text-green-600" : "text-orange-600"}>
                       {h.time > targetTime ? "+" : ""}{(h.time - targetTime).toFixed(1)}s
                     </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {h.quality === "good" ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                    ) : (
+                      <Badge variant="destructive" className="text-[10px] px-1 py-0">{h.quality?.replace("_", " ")}</Badge>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -444,16 +416,32 @@ function SecantContent({
               <p className="text-3xl font-bold text-coffee">{state.next_grind}</p>
             </div>
           )}
+
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Shot Quality</label>
+            <div className="flex gap-1 flex-wrap">
+              {SHOT_QUALITIES.map((sq) => {
+                const Icon = sq.icon;
+                return (
+                  <Button
+                    key={sq.value}
+                    variant={selectedQuality === sq.value ? "default" : "outline"}
+                    size="sm"
+                    className={`text-xs h-8 ${selectedQuality !== sq.value ? sq.color : ""}`}
+                    onClick={() => setSelectedQuality(sq.value)}
+                  >
+                    <Icon className="w-3 h-3 mr-1" />{sq.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="flex gap-2">
-            <Input
-              type="number"
-              step="0.1"
-              placeholder="Shot time (seconds)"
-              value={shotTime}
+            <Input type="number" step="0.1" placeholder="Shot time (seconds)" value={shotTime}
               onChange={(e) => setShotTime(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && onRecord(shotTime)}
-            />
-            <Button variant="coffee" onClick={() => onRecord(shotTime)} disabled={loading || !shotTime}>
+              onKeyDown={(e) => e.key === "Enter" && onRecord(shotTime, selectedQuality)} />
+            <Button variant="coffee" onClick={() => onRecord(shotTime, selectedQuality)} disabled={loading || !shotTime}>
               {loading ? "..." : "Record"}
             </Button>
           </div>
@@ -463,8 +451,8 @@ function SecantContent({
       {state.converged && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
           <p className="text-green-700 text-sm font-medium">
-            Shot time dialed in — {state.history[state.history.length - 1]?.time?.toFixed(1)}s
-            {" @ "}{state.history[state.history.length - 1]?.grind}
+            Shot time dialed in — {state.history.filter(h => h.quality === "good").slice(-1)[0]?.time?.toFixed(1)}s
+            {" @ "}{state.history.filter(h => h.quality === "good").slice(-1)[0]?.grind}
           </p>
         </div>
       )}
@@ -472,36 +460,18 @@ function SecantContent({
   );
 }
 
-function GoldenContent({
-  state,
-  history,
-  onConfigure,
-  onCompare,
-  disabled,
-  loading,
-  needsConfig,
-}: {
-  state: GoldenState | null;
-  history: GoldenComparisonEntry[];
-  onConfigure: () => void;
-  onCompare: (winner: "a" | "b") => void;
-  disabled: boolean;
-  loading: boolean;
-  needsConfig: boolean;
+function GoldenContent({ state, history, onConfigure, onCompare, disabled, loading, needsConfig }: {
+  state: GoldenState | null; history: GoldenComparisonEntry[];
+  onConfigure: () => void; onCompare: (pref: string) => void; disabled: boolean; loading: boolean; needsConfig: boolean;
 }) {
   if (needsConfig) {
     return (
       <div className="text-center space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Secant method converged. Configure golden section bounds to continue.
-        </p>
-        <Button variant="coffeeOutline" onClick={onConfigure} disabled={loading}>
-          {loading ? "Configuring..." : "Continue to Golden Section Search"}
-        </Button>
+        <p className="text-sm text-muted-foreground">Secant method converged. Configure golden section bounds to continue tuning taste.</p>
+        <Button variant="coffeeOutline" onClick={onConfigure} disabled={loading}>{loading ? "Configuring..." : "Continue to Golden Section Search"}</Button>
       </div>
     );
   }
-
   if (!state) return null;
 
   const fineGrind = `${state.coarse.macro}${state.coarse.micro}`;
@@ -510,40 +480,24 @@ function GoldenContent({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between text-sm">
-        <div>
-          <span className="text-xs text-muted-foreground">Fine</span>
-          <p className="font-mono font-bold">{fineGrind}</p>
-        </div>
+        <div><span className="text-xs text-muted-foreground">Fine</span><p className="font-mono font-bold">{fineGrind}</p></div>
         <ArrowRight className="w-3 h-3 text-muted-foreground" />
         <div className="flex-1 mx-2 h-2 bg-muted rounded-full relative">
           {state.point_a && state.point_b && (
             <>
-              <div
-                className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-coffee rounded-full border-2 border-white"
-                style={{
-                  left: `${((parseInt(state.point_a) - parseInt(fineGrind)) / (parseInt(coarseGrind) - parseInt(fineGrind))) * 100}%`,
-                }}
-                title={state.point_a}
-              />
-              <div
-                className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-coffee rounded-full border-2 border-white"
-                style={{
-                  left: `${((parseInt(state.point_b) - parseInt(fineGrind)) / (parseInt(coarseGrind) - parseInt(fineGrind))) * 100}%`,
-                }}
-                title={state.point_b}
-              />
+              <div className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-coffee rounded-full border-2 border-white"
+                style={{ left: `${((parseInt(state.point_a) - parseInt(fineGrind)) / (parseInt(coarseGrind) - parseInt(fineGrind))) * 100}%` }} title={state.point_a} />
+              <div className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-coffee rounded-full border-2 border-white"
+                style={{ left: `${((parseInt(state.point_b) - parseInt(fineGrind)) / (parseInt(coarseGrind) - parseInt(fineGrind))) * 100}%` }} title={state.point_b} />
             </>
           )}
         </div>
         <ArrowRight className="w-3 h-3 text-muted-foreground" />
-        <div>
-          <span className="text-xs text-muted-foreground">Coarse</span>
-          <p className="font-mono font-bold">{coarseGrind}</p>
-        </div>
+        <div><span className="text-xs text-muted-foreground">Coarse</span><p className="font-mono font-bold">{coarseGrind}</p></div>
       </div>
 
       <div className="text-center text-xs text-muted-foreground">
-        Interval width: <span className="font-semibold text-coffee">{state.width.toFixed(2)}</span>
+        Interval: <span className="font-semibold text-coffee">{state.width.toFixed(2)}</span>
         {state.iteration > 0 && <> &mdash; Iteration {state.iteration}</>}
       </div>
 
@@ -551,12 +505,7 @@ function GoldenContent({
         <div className="border rounded-md overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-muted">
-              <tr>
-                <th className="text-left px-2 py-1.5">#</th>
-                <th className="text-left px-2 py-1.5">A</th>
-                <th className="text-left px-2 py-1.5">B</th>
-                <th className="text-left px-2 py-1.5">Winner</th>
-              </tr>
+              <tr><th className="text-left px-2 py-1.5">#</th><th className="text-left px-2 py-1.5">A</th><th className="text-left px-2 py-1.5">B</th><th className="text-left px-2 py-1.5">Result</th></tr>
             </thead>
             <tbody>
               {history.map((h) => (
@@ -565,8 +514,8 @@ function GoldenContent({
                   <td className="px-2 py-1.5 font-mono">{h.point_a}</td>
                   <td className="px-2 py-1.5 font-mono">{h.point_b}</td>
                   <td className="px-2 py-1.5">
-                    <Badge variant={h.winner === "a" ? "default" : "secondary"} className="text-xs px-1.5 py-0">
-                      {h.winner === "a" ? "A" : "B"}
+                    <Badge variant={h.weight < 0 ? "destructive" : h.weight > 0 ? "secondary" : "outline"} className="text-[10px] px-1.5 py-0">
+                      {h.preference.replace(/_/g, " ")}
                     </Badge>
                   </td>
                 </tr>
@@ -594,14 +543,12 @@ function GoldenContent({
           </div>
 
           <p className="text-center text-sm font-medium">Which tasted better?</p>
-
-          <div className="flex gap-2 justify-center">
-            <Button variant="outline" className="flex-1" onClick={() => onCompare("a")} disabled={loading}>
-              <ThumbsUp className="w-3.5 h-3.5 mr-1.5" /> A Better
-            </Button>
-            <Button variant="outline" className="flex-1" onClick={() => onCompare("b")} disabled={loading}>
-              <ThumbsDown className="w-3.5 h-3.5 mr-1.5" /> B Better
-            </Button>
+          <div className="flex gap-1 justify-center flex-wrap">
+            {PREFERENCES.map((p) => (
+              <Button key={p.value} variant={p.variant} size="sm" className="text-xs h-8" onClick={() => onCompare(p.value)} disabled={loading}>
+                {p.label}
+              </Button>
+            ))}
           </div>
         </div>
       )}
@@ -610,41 +557,50 @@ function GoldenContent({
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
           <p className="text-xs text-blue-600">Pull ONE new shot at</p>
           <p className="text-xl font-bold text-blue-700">{state.new_point}</p>
-          {state.retained_point && (
-            <p className="text-xs text-blue-500 mt-1">
-              Compare against retained shot: <span className="font-mono font-bold">{state.retained_point}</span>
-            </p>
-          )}
+          {state.retained_point && <p className="text-xs text-blue-500 mt-1">Compare against retained: <span className="font-mono font-bold">{state.retained_point}</span></p>}
         </div>
       )}
 
       {state.converged && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
           <p className="text-green-700 text-sm font-medium">Taste optimized!</p>
-          <p className="text-green-600 text-xs mt-1">
-            Best grind: <span className="font-mono font-bold">{state.best_grind || state.retained_point || "—"}</span>
-          </p>
+          <p className="text-green-600 text-xs mt-1">Best grind: <span className="font-mono font-bold">{state.best_grind || state.retained_point || "—"}</span></p>
         </div>
       )}
     </div>
   );
 }
 
-function SaveRecipeContent({ finalGrind, onStartAgain }: { finalGrind: string; onStartAgain: () => void }) {
+function SaveRecipeContent({ finalGrind, lockedVars, onStartAgain }: {
+  finalGrind: string; lockedVars: LockedVars; onStartAgain: () => void;
+}) {
   const [recipeName, setRecipeName] = useState("");
+  const [dose, setDose] = useState(lockedVars.dose);
+  const [syield, setYield] = useState(lockedVars.yield);
+  const [temperature, setTemperature] = useState(lockedVars.temperature);
+  const [preinfusion, setPreinfusion] = useState(lockedVars.preinfusion);
+  const [tasteScore, setTasteScore] = useState("");
+  const [tasteComponents, setTasteComponents] = useState<TasteComponents>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   const handleSave = async () => {
     if (!recipeName.trim()) return;
     setSaving(true);
-    setError("");
+    setSaveError("");
     try {
-      await api.recipe.save(recipeName.trim());
+      const ts = tasteScore ? parseFloat(tasteScore) : undefined;
+      const hasTaste = Object.values(tasteComponents).some(v => v != null);
+      await api.recipe.save(recipeName.trim(), {
+        dose, yield: syield, temperature, preinfusion,
+        taste_score: ts,
+        taste_components: hasTaste ? tasteComponents : undefined,
+      });
       setSaved(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save");
+      setSaveError("");
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : "Failed to save");
     } finally {
       setSaving(false);
     }
@@ -658,31 +614,63 @@ function SaveRecipeContent({ finalGrind, onStartAgain }: { finalGrind: string; o
       </div>
 
       {!saved ? (
-        <div className="space-y-2">
-          <Input
-            placeholder="Recipe name (e.g., Morning Espresso)"
-            value={recipeName}
-            onChange={(e) => setRecipeName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSave()}
-          />
-          <div className="flex gap-2">
-            <Button variant="coffee" className="flex-1" onClick={handleSave} disabled={saving || !recipeName.trim()}>
-              <Save className="w-3.5 h-3.5 mr-1.5" />
-              {saving ? "Saving..." : "Save Recipe"}
-            </Button>
+        <div className="space-y-3">
+          <Input placeholder="Recipe name (e.g., Morning Espresso)" value={recipeName} onChange={(e) => setRecipeName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSave()} />
+
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Recipe Variables (pre-filled from pipeline)</label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground">Dose (g)</label>
+                <Input type="number" step="0.1" value={dose} onChange={(e) => setDose(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Yield (g)</label>
+                <Input type="number" step="0.1" value={syield} onChange={(e) => setYield(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Temp (°C)</label>
+                <Input type="number" step="1" value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Preinfusion (s)</label>
+                <Input type="number" step="1" value={preinfusion} onChange={(e) => setPreinfusion(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+            </div>
           </div>
-          {error && <p className="text-xs text-red-600">{error}</p>}
+
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Overall Taste Score (1-10)</label>
+            <Input type="number" min={1} max={10} step={0.5} value={tasteScore} onChange={(e) => setTasteScore(e.target.value)} placeholder="8.5" />
+          </div>
+
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Taste Breakdown (optional)</label>
+            <div className="grid grid-cols-5 gap-1">
+              {TASTE_COMPONENTS.map((tc) => (
+                <div key={tc.key}>
+                  <label className="text-[10px] text-muted-foreground">{tc.label}</label>
+                  <Input type="number" min={1} max={10} step={0.5} className="h-7 text-xs px-1" placeholder="—"
+                    value={tasteComponents[tc.key] ?? ""}
+                    onChange={(e) => setTasteComponents(p => ({ ...p, [tc.key]: e.target.value ? parseFloat(e.target.value) : undefined }))} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <Button variant="coffee" className="w-full" onClick={handleSave} disabled={saving || !recipeName.trim()}>
+            <Save className="w-3.5 h-3.5 mr-1.5" />{saving ? "Saving..." : "Save Recipe"}
+          </Button>
+          {saveError && <p className="text-xs text-red-600">{saveError}</p>}
         </div>
       ) : (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-          <p className="text-green-700 text-sm font-medium">Recipe saved: {recipeName}</p>
+          <p className="text-green-700 text-sm font-medium">Recipe saved!</p>
+          <p className="text-green-600 text-xs mt-1">Added as seed for Bayesian optimization.</p>
         </div>
       )}
 
-      <Button variant="outline" className="w-full" onClick={onStartAgain}>
-        <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-        New Coffee Bag
-      </Button>
+      <Button variant="outline" className="w-full" onClick={onStartAgain}><RotateCcw className="w-3.5 h-3.5 mr-1.5" />New Coffee Bag</Button>
     </div>
   );
 }

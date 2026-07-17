@@ -12,7 +12,8 @@ class SecantMethod:
     Uses linear interpolation (secant method) between the two most recent
     (grind, time) observations to estimate the next grind setting.
 
-    Converges when |time - target| <= tolerance.
+    Converges when |time - target| <= tolerance AND next predicted move
+    is less than one micro click (0.1 grind units).
     """
 
     target_time: float
@@ -22,14 +23,25 @@ class SecantMethod:
     _converged: bool = field(default=False, init=False)
     _iteration: int = field(default=0, init=False)
 
-    def record_shot(self, grind: GrindSetting, shot_time: float) -> dict:
-        """Record a shot's time and return the next grind suggestion.
+    @property
+    def converged(self) -> bool:
+        return self._converged
 
-        Returns a dict with keys:
+    def record_shot(self, grind: GrindSetting, shot_time: float, shot_quality: str = "good") -> dict:
+        """Record a shot and return the next grind suggestion.
+
+        Args:
+            grind: The grind setting used for this shot.
+            shot_time: The measured shot time in seconds.
+            shot_quality: "good", "channeling", "scale_error", "grinder_mistake", or "other".
+                Non-"good" shots are logged but not fed to the algorithm.
+
+        Returns dict with:
             next_grind: GrindSetting or None (if converged)
             converged: bool
             iteration: int
-            error: float | None (seconds from target)
+            error: float | None
+            rejected: bool (True if shot was not fed to algorithm)
         """
         if self._converged:
             return {
@@ -37,6 +49,7 @@ class SecantMethod:
                 "converged": True,
                 "iteration": self._iteration,
                 "error": abs(shot_time - self.target_time),
+                "rejected": False,
             }
 
         self._iteration += 1
@@ -44,8 +57,18 @@ class SecantMethod:
             "iteration": self._iteration,
             "grind": str(grind),
             "time": shot_time,
+            "quality": shot_quality,
         }
         self.history.append(entry)
+
+        if shot_quality != "good":
+            return {
+                "next_grind": self._existing_next_grind(grind),
+                "converged": False,
+                "iteration": self._iteration,
+                "error": abs(shot_time - self.target_time),
+                "rejected": True,
+            }
 
         error = shot_time - self.target_time
         entry["error"] = round(error, 1)
@@ -57,15 +80,39 @@ class SecantMethod:
                 "converged": True,
                 "iteration": self._iteration,
                 "error": round(abs(error), 1),
+                "rejected": False,
             }
 
         next_grind = self._compute_next(grind, shot_time)
+
+        current_float = grind.to_float()
+        next_float = next_grind.to_float()
+        if abs(next_float - current_float) < 0.1:
+            self._converged = True
+            return {
+                "next_grind": None,
+                "converged": True,
+                "iteration": self._iteration,
+                "error": round(abs(error), 1),
+                "rejected": False,
+            }
+
         return {
             "next_grind": next_grind,
             "converged": False,
             "iteration": self._iteration,
             "error": round(abs(error), 1),
+            "rejected": False,
         }
+
+    def _existing_next_grind(self, current_grind: GrindSetting) -> GrindSetting:
+        """When a shot is rejected, return the last valid next_grind or repeat."""
+        for h in reversed(self.history):
+            if h.get("quality", "good") == "good" and h.get("grind"):
+                g = self._parse_grind(h["grind"])
+                if str(g) != str(current_grind):
+                    return g
+        return current_grind
 
     def _compute_next(self, current_grind: GrindSetting, current_time: float) -> GrindSetting:
         """Compute the next grind using secant interpolation or bisection fallback."""
@@ -97,20 +144,12 @@ class SecantMethod:
         return step
 
     def _bisection_step(self, current_grind: GrindSetting, current_time: float) -> GrindSetting:
-        """Fallback: move halfway toward the target direction using a minimal
-        reference slope."""
+        """Fallback: move halfway toward the target direction."""
         error = self.target_time - current_time
-        if error > 0:
-            direction = -1.0
-        else:
-            direction = 1.0
+        direction = -1.0 if error > 0 else 1.0
         step_size = max(0.5, abs(error) / self.target_time * 2.0)
         g_next = current_grind.to_float() + direction * step_size
         return GrindSetting.from_float(g_next)
-
-    @property
-    def converged(self) -> bool:
-        return self._converged
 
     def to_dict(self) -> dict:
         return {
@@ -124,7 +163,6 @@ class SecantMethod:
 
     @staticmethod
     def _parse_grind(s: str) -> GrindSetting:
-        """Parse a grind string like '17C' into a GrindSetting."""
         s = s.strip()
         macro = int(s[:-1])
         micro = s[-1]

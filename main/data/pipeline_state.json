@@ -1,1 +1,126 @@
-{}
+{
+  "phase": "recipe",
+  "coffee_name": "Lunarfall - Cloud",
+  "target_time": 30,
+  "starting_grind": {
+    "macro": 5,
+    "micro": "C"
+  },
+  "locked_vars": {
+    "dose": 18,
+    "yield": 36,
+    "temperature": 93,
+    "preinfusion": 9
+  },
+  "secant": {
+    "target_time": 30,
+    "tolerance": 1.0,
+    "max_iterations": 10,
+    "history": [
+      {
+        "iteration": 1,
+        "grind": "5C",
+        "time": 25.0,
+        "quality": "good",
+        "error": -5.0
+      },
+      {
+        "iteration": 2,
+        "grind": "4H",
+        "time": 26.0,
+        "quality": "good",
+        "error": -4.0
+      },
+      {
+        "iteration": 3,
+        "grind": "2H",
+        "time": 33.0,
+        "quality": "good",
+        "error": 3.0
+      },
+      {
+        "iteration": 4,
+        "grind": "3G",
+        "time": 31.0,
+        "quality": "good",
+        "error": 1.0
+      }
+    ],
+    "converged": true,
+    "iteration": 4,
+    "next_grind": null
+  },
+  "golden": {
+    "coarse": {
+      "macro": 6,
+      "micro": "A"
+    },
+    "fine": {
+      "macro": 1,
+      "micro": "C"
+    },
+    "tolerance": 0.5,
+    "a": 2.6006211240030286,
+    "b": 3.033436854000505,
+    "c": 2.7659420219964668,
+    "d": 2.8681159560070664,
+    "initialized": true,
+    "converged": true,
+    "iteration": 5,
+    "active": true,
+    "point_a": null,
+    "point_b": null,
+    "retained_point": null,
+    "new_point": null,
+    "best_grind": "2I",
+    "width": 0.43,
+    "history": [
+      {
+        "iteration": 1,
+        "point_a": "3A",
+        "point_b": "4C",
+        "preference": "slightly_a",
+        "weight": -1,
+        "action": "pull_new"
+      },
+      {
+        "iteration": 2,
+        "point_a": "2D",
+        "point_b": "3A",
+        "preference": "slightly_a",
+        "weight": -1,
+        "action": "pull_new"
+      },
+      {
+        "iteration": 3,
+        "point_a": "2A",
+        "point_b": "2D",
+        "preference": "slightly_b",
+        "weight": 1,
+        "action": "pull_new"
+      },
+      {
+        "iteration": 4,
+        "point_a": "2D",
+        "point_b": "2G",
+        "preference": "slightly_b",
+        "weight": 1,
+        "action": "pull_new"
+      },
+      {
+        "iteration": 5,
+        "point_a": "2G",
+        "point_b": "2I",
+        "preference": "slightly_b",
+        "weight": 1,
+        "action": "done"
+      }
+    ]
+  },
+  "recipe": {
+    "saved": true,
+    "recipe_name": "poopbutt",
+    "final_grind": "2I"
+  },
+  "started_at": "2026-07-17T18:47:42.835314+00:00"
+}

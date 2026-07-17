@@ -1,4 +1,10 @@
-"""Golden Section Search for maximizing espresso taste."""
+"""Golden Section Search for maximizing espresso taste.
+
+Now accepts a 5-point preference scale:
+    strongly_a (-2) < slightly_a (-1) < same (0) < slightly_b (+1) < strongly_b (+2)
+
+Default behaviour when both points weight equally: fallback to "a" selection.
+"""
 
 from dataclasses import dataclass
 
@@ -6,15 +12,21 @@ from .grind import GrindSetting
 
 PHI = (1 + 5**0.5) / 2
 
+PREFERENCE_WEIGHTS = {
+    "strongly_a": -2,
+    "slightly_a": -1,
+    "same": 0,
+    "slightly_b": 1,
+    "strongly_b": 2,
+}
+
 
 @dataclass
 class GoldenSectionSearch:
     """Golden section search to find the grind setting that maximizes taste.
 
-    After an initial pair of shots, each iteration requires only one new shot
-    because one test point from the previous iteration is retained.
-
-    Converges when the interval width is <= tolerance (in float grind units).
+    Uses a 5-point preference comparison for richer ranking data.
+    Converges when interval width <= tolerance (in float grind units).
     """
 
     coarse: GrindSetting
@@ -27,39 +39,36 @@ class GoldenSectionSearch:
     _initialized: bool = False
     _converged: bool = False
     _iteration: int = 0
-    _retained: str = ""  # "c" or "d"
 
     def __post_init__(self) -> None:
         self._a = self.fine.to_float()
         self._b = self.coarse.to_float()
 
     def initial_points(self) -> dict:
-        """Return the two initial test points to pull (A and B).
-
-        Must be called before compare().
-        """
+        """Return the two initial test points (A and B)."""
         width = self._b - self._a
         self._c = self._b - width / PHI
         self._d = self._a + width / PHI
         self._initialized = True
-
         return {
             "point_a": GrindSetting.from_float(self._c),
             "point_b": GrindSetting.from_float(self._d),
         }
 
-    def compare(self, winner: str) -> dict:
-        """Record which test point tasted better and return the next action.
+    def compare(self, preference: str) -> dict:
+        """Record which test point tasted better using 5-point scale.
 
         Args:
-            winner: "a" (point_c) or "b" (point_d)
+            preference: "strongly_a", "slightly_a", "same", "slightly_b", or "strongly_b"
 
         Returns dict with:
             action: "pull_new" or "done"
-            new_point: GrindSetting | None (the single new shot to pull)
-            retained_point: GrindSetting | None (compare new shot against this)
+            new_point: GrindSetting | None
+            retained_point: GrindSetting | None
             converged: bool
-            width: float (current interval width)
+            width: float
+            preference: str
+            weight: int (-2 to +2)
         """
         if not self._initialized:
             raise RuntimeError("Call initial_points() before compare()")
@@ -71,11 +80,14 @@ class GoldenSectionSearch:
                 "retained_point": None,
                 "converged": True,
                 "width": round(self._b - self._a, 2),
+                "preference": preference,
+                "weight": PREFERENCE_WEIGHTS.get(preference, 0),
             }
 
         self._iteration += 1
+        weight = PREFERENCE_WEIGHTS.get(preference, 0)
 
-        if winner == "a":
+        if weight <= 0:
             self._b = self._d
             self._d = self._c
             self._c = self._b - (self._b - self._a) / PHI
@@ -96,6 +108,8 @@ class GoldenSectionSearch:
                 "converged": True,
                 "width": round(width, 2),
                 "best_grind": best,
+                "preference": preference,
+                "weight": weight,
             }
 
         return {
@@ -104,6 +118,8 @@ class GoldenSectionSearch:
             "retained_point": GrindSetting.from_float(self._d),
             "converged": False,
             "width": round(width, 2),
+            "preference": preference,
+            "weight": weight,
         }
 
     @property
