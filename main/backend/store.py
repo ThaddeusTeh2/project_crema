@@ -73,9 +73,29 @@ def load_recipes() -> list[dict]:
 def save_recipe(recipe: dict) -> dict:
     """Save a recipe and return it."""
     recipes = load_recipes()
+    recipe["id"] = str(len(recipes) + 1)
     recipes.append(recipe)
     _write_json(RECIPES_FILE, recipes)
     return recipe
+
+
+def delete_recipe(recipe_id: str) -> bool:
+    """Delete a recipe by ID. Returns True if found and deleted."""
+    recipes = load_recipes()
+    for i, r in enumerate(recipes):
+        if str(r.get("id")) == str(recipe_id):
+            recipes.pop(i)
+            _write_json(RECIPES_FILE, recipes)
+            return True
+    return False
+
+
+def hard_reset_all() -> None:
+    """Clear all data — shots, pipeline state, recipes, bayesian sessions."""
+    _write_json(SHOTS_FILE, [])
+    _write_json(STATE_FILE, {})
+    _write_json(RECIPES_FILE, [])
+    _write_json(BAYESIAN_FILE, {})
 
 
 def load_bayesian_sessions() -> dict:

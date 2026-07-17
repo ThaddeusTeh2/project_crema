@@ -101,6 +101,7 @@ export interface PipelineState {
 }
 
 export interface Recipe {
+  id: string;
   name: string;
   coffee_name: string;
   grind: string | null;

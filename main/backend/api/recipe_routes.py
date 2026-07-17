@@ -19,7 +19,7 @@ def save_recipe():
     if not state:
         return jsonify({"error": "No active pipeline."}), 400
 
-    golden_data = state.get("golden", {})
+    golden_data = state.get("golden") or {}
     secant_data = state.get("secant", {})
     locked = state.get("locked_vars", {})
 
@@ -46,6 +46,11 @@ def save_recipe():
         except (ValueError, IndexError):
             pass
 
+    shot_time = None
+    if secant_data.get("history"):
+        last = secant_data["history"][-1]
+        shot_time = last.get("time")
+
     seed_shot = {
         "coffee_name": state.get("coffee_name", ""),
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -55,7 +60,7 @@ def save_recipe():
         "yield": syield,
         "temperature": temperature,
         "preinfusion": preinfusion,
-        "shot_time": secant_data.get("history", [])[-1].get("time") if secant_data.get("history") else None,
+        "shot_time": shot_time,
         "taste_score": taste_score,
         "taste_components": taste_components,
         "method": "bayesian_seed",
@@ -97,3 +102,17 @@ def save_recipe():
 def list_recipes():
     recipes = store.load_recipes()
     return jsonify(recipes)
+
+
+@recipe_bp.route("/recipes/<recipe_id>", methods=["DELETE"])
+def delete_recipe(recipe_id: str):
+    deleted = store.delete_recipe(recipe_id)
+    if not deleted:
+        return jsonify({"error": f"Recipe {recipe_id} not found"}), 404
+    return jsonify({"ok": True})
+
+
+@recipe_bp.route("/reset-all", methods=["POST"])
+def reset_all():
+    store.hard_reset_all()
+    return jsonify({"ok": True})

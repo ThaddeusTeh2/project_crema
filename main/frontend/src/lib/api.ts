@@ -96,6 +96,7 @@ export const api = {
         ...extra,
       }),
     list: () => get<Recipe[]>("/recipes"),
+    delete: (id: string) => del<{ ok: boolean }>(`/recipes/${id}`),
   },
   bayesian: {
     init: (coffee_name: string, n_initial?: number) =>
@@ -145,4 +146,5 @@ export const api = {
     clear: () => del<{ ok: boolean }>("/shots"),
     exportJson: () => fetch(`${BASE}/shots/export`),
   },
+  resetAll: () => post<{ ok: boolean }>("/reset-all"),
 };
