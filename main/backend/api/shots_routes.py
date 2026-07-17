@@ -64,3 +64,9 @@ def export_shots():
         path = f.name
 
     return send_file(path, as_attachment=True, download_name="crema_shots.json")
+
+
+@shots_bp.route("", methods=["DELETE"])
+def clear_shots():
+    store.clear_shots()
+    return jsonify({"ok": True})

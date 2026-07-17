@@ -75,3 +75,35 @@ def get_state():
 def reset_pipeline():
     store.reset_state()
     return jsonify({"ok": True})
+
+
+@pipeline_bp.route("/restart-phase", methods=["POST"])
+def restart_phase():
+    state = store.load_state()
+    if not state:
+        return jsonify({"error": "No active pipeline."}), 400
+
+    phase = state.get("phase")
+    if phase == "secant":
+        starting = state.get("starting_grind", {"macro": 15, "micro": "E"})
+        target = state.get("target_time", 30)
+        state["secant"] = {
+            "active": True,
+            "converged": False,
+            "history": [],
+            "next_grind": f"{starting['macro']}{starting['micro']}",
+            "iteration": 0,
+            "error": None,
+            "target_time": target,
+        }
+    elif phase == "golden":
+        state["phase"] = "secant"
+        state["golden"] = None
+    elif phase == "recipe":
+        state["phase"] = "golden"
+        state["recipe"] = None
+    else:
+        return jsonify({"error": f"Cannot restart from phase '{phase}'."}), 400
+
+    store.save_state(state)
+    return jsonify({"ok": True, "phase": state["phase"], "state": state})

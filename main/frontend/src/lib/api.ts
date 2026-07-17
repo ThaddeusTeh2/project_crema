@@ -32,6 +32,15 @@ async function get<T>(url: string): Promise<T> {
   return res.json();
 }
 
+async function del<T>(url: string): Promise<T> {
+  const res = await fetch(`${BASE}${url}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || "Request failed");
+  }
+  return res.json();
+}
+
 export const api = {
   pipeline: {
     start: (data: {
@@ -42,6 +51,7 @@ export const api = {
     }) => post<PipelineState>("/pipeline/start", data),
     state: () => get<PipelineState>("/pipeline/state"),
     reset: () => post<{ ok: boolean }>("/pipeline/reset"),
+    restartPhase: () => post<{ ok: boolean; phase: string; state: PipelineState }>("/pipeline/restart-phase"),
   },
   secant: {
     record: (shot_time: number) =>
@@ -84,6 +94,7 @@ export const api = {
       return get<Shot[]>(`/shots${qs}`);
     },
     add: (shot: Partial<Shot>) => post<Shot>("/shots", shot),
+    clear: () => del<{ ok: boolean }>("/shots"),
     exportJson: () => fetch(`${BASE}/shots/export`),
   },
 };

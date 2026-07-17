@@ -91,7 +91,7 @@ class SecantMethod:
     def _initial_step(self, g_n: float, t_n: float) -> float:
         """Estimate an initial step size based on how far off the time is."""
         error_ratio = (self.target_time - t_n) / self.target_time
-        step = error_ratio * 3.0
+        step = -error_ratio * 3.0
         if abs(step) < 0.5:
             step = 0.5 if step >= 0 else -0.5
         return step

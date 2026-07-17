@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Trash2 } from "lucide-react";
 import type { Shot } from "@/types";
 import { api } from "@/lib/api";
 
@@ -17,9 +19,22 @@ export function ShotLog() {
   const [shots, setShots] = useState<Shot[]>([]);
   const [filter, setFilter] = useState("");
 
-  useEffect(() => {
+  const loadShots = () => {
     api.shots.list().then(setShots).catch(console.error);
+  };
+
+  useEffect(() => {
+    loadShots();
   }, []);
+
+  const handleClear = async () => {
+    try {
+      await api.shots.clear();
+      setShots([]);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const filtered = filter ? shots.filter((s) => s.method === filter) : shots;
 
@@ -28,9 +43,17 @@ export function ShotLog() {
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <span>Shot Log</span>
-          <span className="text-sm font-normal text-muted-foreground">
-            {shots.length} shots
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-normal text-muted-foreground">
+              {shots.length} shots
+            </span>
+            {shots.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={handleClear} className="text-red-500 hover:text-red-700">
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

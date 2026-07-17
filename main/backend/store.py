@@ -50,6 +50,11 @@ def load_shots() -> list[dict]:
     return _read_json(SHOTS_FILE)
 
 
+def clear_shots() -> None:
+    """Clear all logged shots."""
+    _write_json(SHOTS_FILE, [])
+
+
 def add_shot(shot: dict) -> dict:
     """Append a shot to the log and return it."""
     shots = load_shots()
