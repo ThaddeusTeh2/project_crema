@@ -23,7 +23,7 @@ def save_recipe():
 
     final_grind = None
     if golden_data.get("converged"):
-        final_grind = golden_data.get("point_a") or golden_data.get("retained_point")
+        final_grind = golden_data.get("best_grind") or golden_data.get("point_a") or golden_data.get("retained_point")
     elif secant_data.get("converged") and secant_data.get("history"):
         final_grind = secant_data["history"][-1].get("grind")
 

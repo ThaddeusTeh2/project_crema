@@ -2,10 +2,11 @@ import { useState } from "react";
 import { PipelineView } from "@/components/PipelineView";
 import { BayesianView } from "@/components/BayesianView";
 import { ShotLog } from "@/components/ShotLog";
+import { RecipesView } from "@/components/RecipesView";
 import { Button } from "@/components/ui/button";
 import { Coffee } from "lucide-react";
 
-type Tab = "pipeline" | "advanced" | "log";
+type Tab = "pipeline" | "advanced" | "log" | "recipes";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("pipeline");
@@ -19,14 +20,14 @@ export default function App() {
             <h1 className="text-xl font-bold text-coffee">Crema</h1>
           </div>
           <nav className="flex gap-1">
-            {(["pipeline", "advanced", "log"] as const).map((t) => (
+            {(["pipeline", "advanced", "log", "recipes"] as const).map((t) => (
               <Button
                 key={t}
                 variant={tab === t ? "coffee" : "ghost"}
                 size="sm"
                 onClick={() => setTab(t)}
               >
-                {t === "pipeline" ? "Pipeline" : t === "advanced" ? "Advanced" : "Log"}
+                {t === "pipeline" ? "Pipeline" : t === "advanced" ? "Advanced" : t === "log" ? "Log" : "Recipes"}
               </Button>
             ))}
           </nav>
@@ -37,6 +38,7 @@ export default function App() {
         {tab === "pipeline" && <PipelineView />}
         {tab === "advanced" && <BayesianView />}
         {tab === "log" && <ShotLog />}
+        {tab === "recipes" && <RecipesView />}
       </main>
     </div>
   );

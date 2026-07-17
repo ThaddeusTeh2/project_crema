@@ -57,6 +57,7 @@ def configure_golden():
         "point_b": str(initial["point_b"]),
         "retained_point": None,
         "new_point": None,
+        "best_grind": None,
         "width": round(coarse.to_float() - fine.to_float(), 2),
         "iteration": 0,
     }
@@ -127,6 +128,7 @@ def compare_golden():
         "point_b": str(GrindSetting.from_float(gs._d)) if not result["converged"] else None,
         "retained_point": str(result["retained_point"]) if result.get("retained_point") else None,
         "new_point": str(result["new_point"]) if result.get("new_point") else None,
+        "best_grind": str(result["best_grind"]) if result.get("best_grind") else None,
         "width": result["width"],
         "iteration": gs.iteration,
     }

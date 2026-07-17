@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { GrindInput } from "@/components/GrindInput";
 import { GrinderDisclaimer } from "@/components/GrinderDisclaimer";
 import { ThumbsUp, ThumbsDown, ArrowRight, Coffee, RotateCcw, Undo2, Save, CheckCircle2, CircleDashed } from "lucide-react";
-import type { PipelineState, PipelinePhase, SecantState, GoldenState, SecantRecordResponse, GoldenCompareResponse } from "@/types";
+import type { PipelineState, PipelinePhase, SecantState, GoldenState, GoldenComparisonEntry, SecantRecordResponse, GoldenCompareResponse } from "@/types";
 import { api } from "@/lib/api";
 
 export function PipelineView() {
@@ -15,6 +15,7 @@ export function PipelineView() {
   const [targetTime, setTargetTime] = useState(30);
   const [secant, setSecant] = useState<SecantState | null>(null);
   const [golden, setGolden] = useState<GoldenState | null>(null);
+  const [goldenHistory, setGoldenHistory] = useState<GoldenComparisonEntry[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -100,7 +101,8 @@ export function PipelineView() {
     try {
       await api.golden.config();
       const fullState = await api.pipeline.state();
-      setGolden(fullState.golden);
+      setGolden({ ...fullState.golden!, history: [], best_grind: null });
+      setGoldenHistory([]);
       setPhase("golden");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start golden section");
@@ -115,15 +117,28 @@ export function PipelineView() {
     setError("");
     try {
       const result: GoldenCompareResponse = await api.golden.compare(winner);
+
+      const entry: GoldenComparisonEntry = {
+        iteration: golden.iteration + 1,
+        point_a: golden.point_a || "?",
+        point_b: golden.point_b || "?",
+        winner,
+        action: result.action,
+      };
+      const newHistory = [...goldenHistory, entry];
+      setGoldenHistory(newHistory);
+
       const newState: GoldenState = {
         ...golden,
         converged: result.converged,
-        point_a: result.action === "pull_new" ? golden.point_a : null,
-        point_b: result.action === "pull_new" ? golden.point_b : null,
+        point_a: result.action === "pull_new" ? result.new_point : null,
+        point_b: result.action === "pull_new" ? result.retained_point : null,
         retained_point: result.retained_point,
         new_point: result.new_point,
         width: result.width,
         iteration: golden.iteration + 1,
+        history: newHistory,
+        best_grind: result.best_grind || null,
       };
       setGolden(newState);
       if (result.converged) {
@@ -145,6 +160,7 @@ export function PipelineView() {
       setTargetTime(30);
       setSecant(null);
       setGolden(null);
+      setGoldenHistory([]);
       setError("");
     } catch {
       // Ignore
@@ -160,7 +176,8 @@ export function PipelineView() {
       const result = await api.pipeline.restartPhase();
       setPhase(result.phase as PipelinePhase);
       setSecant(result.state.secant);
-      setGolden(result.state.golden);
+      setGolden(null);
+      setGoldenHistory([]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to restart phase");
     } finally {
@@ -169,8 +186,8 @@ export function PipelineView() {
   };
 
   const getFinalGrind = (): string => {
-    if (golden?.converged && secant?.converged) {
-      return golden.point_a || golden.retained_point || "—";
+    if (golden?.converged) {
+      return golden.best_grind || golden.retained_point || golden.point_a || "—";
     }
     if (secant?.converged && secant.history.length > 0) {
       return secant.history[secant.history.length - 1].grind;
@@ -181,7 +198,7 @@ export function PipelineView() {
   const isSetupDone = phase !== "setup";
   const showSecant = phase !== "setup";
   const isSecantDone = phase === "golden" || phase === "recipe";
-  const showGolden = isSecantDone || (secant?.converged ?? false);
+  const showGolden = phase === "golden" || phase === "recipe";
   const isGoldenDone = phase === "recipe" || (golden?.converged ?? false);
   const showRecipe = isGoldenDone;
 
@@ -262,6 +279,7 @@ export function PipelineView() {
         >
           <GoldenContent
             state={golden}
+            history={goldenHistory}
             onConfigure={handleGoldenConfigure}
             onCompare={handleGoldenCompare}
             disabled={isGoldenDone}
@@ -456,6 +474,7 @@ function SecantContent({
 
 function GoldenContent({
   state,
+  history,
   onConfigure,
   onCompare,
   disabled,
@@ -463,6 +482,7 @@ function GoldenContent({
   needsConfig,
 }: {
   state: GoldenState | null;
+  history: GoldenComparisonEntry[];
   onConfigure: () => void;
   onCompare: (winner: "a" | "b") => void;
   disabled: boolean;
@@ -524,7 +544,37 @@ function GoldenContent({
 
       <div className="text-center text-xs text-muted-foreground">
         Interval width: <span className="font-semibold text-coffee">{state.width.toFixed(2)}</span>
+        {state.iteration > 0 && <> &mdash; Iteration {state.iteration}</>}
       </div>
+
+      {history.length > 0 && (
+        <div className="border rounded-md overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted">
+              <tr>
+                <th className="text-left px-2 py-1.5">#</th>
+                <th className="text-left px-2 py-1.5">A</th>
+                <th className="text-left px-2 py-1.5">B</th>
+                <th className="text-left px-2 py-1.5">Winner</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.iteration} className="border-t">
+                  <td className="px-2 py-1.5 text-muted-foreground">{h.iteration}</td>
+                  <td className="px-2 py-1.5 font-mono">{h.point_a}</td>
+                  <td className="px-2 py-1.5 font-mono">{h.point_b}</td>
+                  <td className="px-2 py-1.5">
+                    <Badge variant={h.winner === "a" ? "default" : "secondary"} className="text-xs px-1.5 py-0">
+                      {h.winner === "a" ? "A" : "B"}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {!disabled && !state.converged && state.point_a && state.point_b && (
         <div className="space-y-2">
@@ -532,10 +582,14 @@ function GoldenContent({
             <div className="bg-coffee/5 border border-coffee/20 rounded-lg p-3 text-center">
               <p className="text-xs text-muted-foreground">Shot A</p>
               <p className="text-xl font-bold text-coffee">{state.point_a}</p>
+              {state.new_point === state.point_a && <Badge variant="outline" className="text-xs mt-1">New</Badge>}
+              {state.retained_point === state.point_a && <Badge variant="secondary" className="text-xs mt-1">Retained</Badge>}
             </div>
             <div className="bg-coffee/5 border border-coffee/20 rounded-lg p-3 text-center">
               <p className="text-xs text-muted-foreground">Shot B</p>
               <p className="text-xl font-bold text-coffee">{state.point_b}</p>
+              {state.new_point === state.point_b && <Badge variant="outline" className="text-xs mt-1">New</Badge>}
+              {state.retained_point === state.point_b && <Badge variant="secondary" className="text-xs mt-1">Retained</Badge>}
             </div>
           </div>
 
@@ -552,12 +606,14 @@ function GoldenContent({
         </div>
       )}
 
-      {state.new_point && !state.converged && (
+      {state.new_point && !state.converged && !state.point_a && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-          <p className="text-xs text-blue-600">Pull ONE shot at</p>
+          <p className="text-xs text-blue-600">Pull ONE new shot at</p>
           <p className="text-xl font-bold text-blue-700">{state.new_point}</p>
           {state.retained_point && (
-            <p className="text-xs text-blue-500 mt-1">Compare against: {state.retained_point}</p>
+            <p className="text-xs text-blue-500 mt-1">
+              Compare against retained shot: <span className="font-mono font-bold">{state.retained_point}</span>
+            </p>
           )}
         </div>
       )}
@@ -565,7 +621,9 @@ function GoldenContent({
       {state.converged && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
           <p className="text-green-700 text-sm font-medium">Taste optimized!</p>
-          <p className="text-green-600 text-xs mt-1">Best grind: {state.point_a || state.retained_point || "—"}</p>
+          <p className="text-green-600 text-xs mt-1">
+            Best grind: <span className="font-mono font-bold">{state.best_grind || state.retained_point || "—"}</span>
+          </p>
         </div>
       )}
     </div>

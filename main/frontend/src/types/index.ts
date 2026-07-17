@@ -36,6 +36,14 @@ export interface SecantState {
   target_time: number;
 }
 
+export interface GoldenComparisonEntry {
+  iteration: number;
+  point_a: string;
+  point_b: string;
+  winner: "a" | "b";
+  action: "pull_new" | "done";
+}
+
 export interface GoldenState {
   active: boolean;
   converged: boolean;
@@ -47,6 +55,8 @@ export interface GoldenState {
   new_point: string | null;
   width: number;
   iteration: number;
+  history: GoldenComparisonEntry[];
+  best_grind: string | null;
 }
 
 export interface RecipeState {
